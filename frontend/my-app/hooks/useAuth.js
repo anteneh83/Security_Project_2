@@ -12,12 +12,13 @@ export default function useAuth() {
   );
 
   // -------------------- REGISTER --------------------
-  const register = async ({ name, email, password, department }) => {
+  const register = async ({ name, email, password, department, captcha }) => {
     const res = await axios.post('http://localhost:4000/api/auth/register', {
       name,
       email,
       password,
       department,
+      captcha,
     });
     return res.data;
   };
@@ -39,7 +40,7 @@ export default function useAuth() {
         setToken(data.token);
         setRole(data.role || 'author');
       }
-
+      console.log('Login response data:', data);
       return {
         token: data.token || data.tempToken,   // MFA flow uses tempToken
         role: data.role,

@@ -33,6 +33,8 @@ export default function ReviewerDashboard() {
   // Filters
   const [filterDepartment, setFilterDepartment] = useState("");
   const [filterKeyword, setFilterKeyword] = useState("");
+  const [newRole, setNewRole] = useState("");
+  const [reason, setReason] = useState("");
 
   const api = axios.create({
     baseURL: "http://localhost:4000/api",
@@ -133,6 +135,23 @@ const applyFilters = () => {
     }
   };
 
+   // Submit new role request
+  const submitRequest = async () => {
+    if (!newRole) return toast.error("Please select a role");
+    setLoading(true);
+    try {
+      await api.post("/admin/roles/request", { requestedRole: newRole, reason });
+      toast.success("Role change request submitted");
+      setNewRole("");
+      setReason("");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || "Failed to submit request");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
   // Download paper PDF
   const downloadPaper = async (id: string, fileName: string) => {
     try {
@@ -177,6 +196,40 @@ const applyFilters = () => {
         Logout
       </button>
     </div>
+    {/* Role Request Form */}
+      <section className="bg-white p-4 rounded shadow space-y-4">
+        <h2 className="text-xl font-semibold">Submit a Role Change Request</h2>
+        <div className="flex flex-col space-y-2">
+          <select
+            className="border p-2 rounded"
+            value={newRole}
+            onChange={(e) => setNewRole(e.target.value)}
+            disabled={loading}
+          >
+            <option value="">Select Role</option>
+            <option value="author">Author</option>
+            <option value="reviewer">Reviewer</option>
+            <option value="editor">Editor</option>
+            <option value="hr">HR</option>
+            <option value="admin">Admin</option>
+          </select>
+          <input
+            type="text"
+            placeholder="Reason for role change"
+            className="border p-2 rounded"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            disabled={loading}
+          />
+          <button
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+            onClick={submitRequest}
+            disabled={loading}
+          >
+            Submit Request
+          </button>
+        </div>
+      </section>
 
       {/* Filters */}
       <section className="bg-white p-4 rounded shadow space-y-2">

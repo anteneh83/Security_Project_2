@@ -7,7 +7,7 @@ require('dotenv').config();
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { encrypt } = require('./utils/crypto');
+const { encrypt } = require('./src/utils/crypto');
 
 const BACKUP_DIR = process.env.BACKUP_DIR || './backups';
 const MONGO_URI = process.env.MONGO_URI;

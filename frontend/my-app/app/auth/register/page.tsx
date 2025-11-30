@@ -3,12 +3,14 @@
 import { useState } from 'react';
 import useAuth from '@/hooks/useAuth';
 import { useRouter } from 'next/navigation';
+import ReCAPTCHA from 'react-google-recaptcha';
 
 export default function RegisterPage() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [department, setDepartment] = useState('');
   const [password, setPassword] = useState('');
+  const [captchaToken, setCaptchaToken] = useState('');
   const [msg, setMsg] = useState('');
   const [error, setError] = useState('');
 
@@ -20,8 +22,8 @@ export default function RegisterPage() {
     setMsg('');
     setError('');
 
-    if (!name || !email || !department || !password) {
-      setError('All fields are required.');
+    if (!name || !email || !department || !password || !captchaToken) {
+      setError('All fields and CAPTCHA are required.');
       return;
     }
 
@@ -30,10 +32,10 @@ export default function RegisterPage() {
         name,
         email,
         password,
-        department
+        department,
+        captcha: captchaToken
       });
 
-      // Backend success message (e.g. "Verification email sent")
       setMsg(res.message || 'Registered successfully! Check your email for verification.');
 
       // Redirect to login after success
@@ -41,18 +43,17 @@ export default function RegisterPage() {
 
     } catch (err) {
       console.log(err);
-
-      // Handle backend error messages from axios
       const errorMessage =
         err?.response?.data?.message ||
         err.message ||
         'Registration failed';
 
-      // Custom error UI messages
       if (errorMessage.includes('Email already used')) {
         setError('This email is already registered. Please login or use another email.');
       } else if (errorMessage.includes('Email and password required')) {
         setError('Email and password are required.');
+      } else if (errorMessage.includes('Captcha')) {
+        setError('Please complete the CAPTCHA challenge.');
       } else {
         setError(errorMessage);
       }
@@ -98,6 +99,12 @@ export default function RegisterPage() {
             onChange={(e) => setPassword(e.target.value)}
             className="w-full p-2 border rounded"
             required
+          />
+
+          {/* -------------------- CAPTCHA -------------------- */}
+          <ReCAPTCHA
+            sitekey="6Lce1BwsAAAAAG4TGGi8bWkFihSTaF9FZX2ehbrT"
+            onChange={(token) => setCaptchaToken(token)}
           />
 
           <button

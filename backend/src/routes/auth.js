@@ -6,6 +6,8 @@ const User = require('../models/User');
 const { createLog } = require('../utils/logger');
 const speakeasy = require('speakeasy');
 const nodemailer = require('nodemailer');
+const axios = require('axios'); // if not already imported
+
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -16,7 +18,19 @@ const transporter = nodemailer.createTransport({
 
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, department } = req.body;
+    const { name, email, password, department, captcha } = req.body;
+
+    // -------------------- CAPTCHA CHECK --------------------
+    if (!captcha) return res.status(400).json({ message: 'Captcha is required' });
+
+    const verifyURL = `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captcha}`;
+
+    const googleRes = await axios.post(verifyURL);
+    if (!googleRes.data.success) {
+      return res.status(400).json({ message: 'Captcha verification failed' });
+    }
+
+    // -------------------- EMAIL & PASSWORD CHECK --------------------
     if (!email || !password) return res.status(400).json({ message: 'Email and password required' });
 
     const existing = await User.findOne({ email });
@@ -26,7 +40,7 @@ router.post('/register', async (req, res) => {
     const user = await User.create({
       name, email, passwordHash, department,
       mfaSecret: '',
-      mfaEnabled: false,   // <-- important
+      mfaEnabled: false,
       accountStatus: 'pending'
     });
 
@@ -133,13 +147,13 @@ router.post('/login', async (req, res) => {
       });
 
       return res.json({
-        mfaRequired: true,
+        mfaRequired: false,
         alreadyEnabled: true,
         tempToken,
         role: user.role,
         message: 'Enter your MFA OTP'
       });
-    }
+    } 
 
     // -------------------- NORMAL LOGIN (NO MFA) --------------------
     const token = jwt.sign(
@@ -153,7 +167,7 @@ router.post('/login', async (req, res) => {
     return res.json({
       token,
       role: user.role,
-      mfaRequired: false,
+      mfaRequired: true,
       alreadyEnabled: false
     });
 

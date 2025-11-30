@@ -16,10 +16,7 @@ const {
 const upload = multer({ dest: 'uploads/' });
 
 /**
- * Submit a paper (authenticated).
- * Accepts multipart/form-data:
- * - title, abstract, keywords (comma separated), macLabel, department
- * - paper file field name: paper
+ * Submit a paper (authenticated)
  */
 router.post('/', auth, upload.single('paper'), async (req, res) => {
   try {
@@ -32,7 +29,6 @@ router.post('/', auth, upload.single('paper'), async (req, res) => {
       return res.status(400).json({ message: 'Invalid file type' });
     }
 
-    // move to storage
     const destDir = path.join('storage', String(new Date().getFullYear()));
     fs.mkdirSync(destDir, { recursive: true });
     const newPath = path.join(destDir, `${Date.now()}_${file.originalname}`);
@@ -49,6 +45,7 @@ router.post('/', auth, upload.single('paper'), async (req, res) => {
       filePath: newPath,
       macLabel: Number(req.body.macLabel) || 1,
       department: req.body.department || req.user.department,
+      status: 'submitted', // default status
     });
 
     await createLog({
@@ -67,28 +64,29 @@ router.post('/', auth, upload.single('paper'), async (req, res) => {
 
 /**
  * Get all papers (authenticated)
- * - Authors see only their own papers
- * - Admins/superadmins can see all
- * - Security layers: MAC, ABAC, RuBAC, DAC
+ * Includes DAC access
  */
 router.get('/', auth, async (req, res) => {
   try {
-    let papers;
+    let papers = [];
 
     if (req.user.role === 'author') {
-      // Only fetch papers authored by this user
-      papers = await Paper.find({ authorId: req.user._id })
-        .sort({ createdAt: -1 })
-        .select('title abstract keywords filePath macLabel department status createdAt'); // select only necessary fields
+      // Own papers
+      papers = await Paper.find({ authorId: req.user._id });
     } else {
-      // Admin / superadmin can see all
-      papers = await Paper.find()
-        .sort({ createdAt: -1 })
-        .select('title abstract keywords authorId filePath macLabel department status createdAt');
+      // Admin / superadmin / editor can see all
+      papers = await Paper.find();
     }
 
-    // Format for frontend
-    const formatted = papers.map((p) => ({
+    // Include papers shared via DAC
+    const dacPapers = await Paper.find({ dacPermissions: req.user._id });
+
+    // Merge and remove duplicates
+    const allPapers = [...papers, ...dacPapers].filter(
+      (v, i, a) => a.findIndex((t) => t._id.equals(v._id)) === i
+    );
+
+    const formatted = allPapers.map((p) => ({
       _id: p._id,
       title: p.title,
       authorId: p.authorId,
@@ -98,6 +96,7 @@ router.get('/', auth, async (req, res) => {
       macLabel: p.macLabel,
       department: p.department,
       status: p.status,
+      dacPermissions: p.dacPermissions,
       createdAt: p.createdAt,
     }));
 
@@ -117,7 +116,6 @@ router.put('/:id', auth, upload.single('paper'), async (req, res) => {
     if (!paper.authorId.equals(req.user._id))
       return res.status(403).json({ message: 'Only author can update' });
 
-    // Update fields
     paper.title = req.body.title || paper.title;
     paper.abstract = req.body.abstract || paper.abstract;
     paper.keywords = (req.body.keywords || paper.keywords.join(','))
@@ -126,7 +124,6 @@ router.put('/:id', auth, upload.single('paper'), async (req, res) => {
       .filter(Boolean);
     paper.department = req.body.department || paper.department;
 
-    // Replace file if new uploaded
     if (req.file) {
       if (fs.existsSync(paper.filePath)) fs.unlinkSync(paper.filePath);
       const destDir = path.join('storage', String(new Date().getFullYear()));
@@ -152,62 +149,8 @@ router.put('/:id', auth, upload.single('paper'), async (req, res) => {
   }
 });
 
-
 /**
- * Get paper metadata (secured)
- */
-router.get(
-  '/:id',
-  auth,
-  enforceMAC,
-  enforceABACDepartment,
-  enforceRuBACWorkingHours,
-  enforceDAC,
-  async (req, res) => {
-    try {
-      const paper = req.paper;
-      res.json({ paper });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ message: 'Server error' });
-    }
-  }
-);
-
-/**
- * Download paper file (secured)
- */
-router.get(
-  '/:id/download',
-  auth,
-  enforceMAC,
-  enforceABACDepartment,
-  enforceRuBACWorkingHours,
-  enforceDAC,
-  async (req, res) => {
-    try {
-      const paper = req.paper;
-      const filepath = paper.filePath;
-      if (!filepath || !fs.existsSync(filepath))
-        return res.status(404).json({ message: 'File not found' });
-
-      await createLog({
-        userId: req.user._id,
-        action: 'DOWNLOAD_PAPER',
-        ip: req.ip,
-        rawData: { paperId: paper._id },
-      });
-
-      res.download(filepath);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ message: 'Server error' });
-    }
-  }
-);
-
-/**
- * Modify DAC permissions (only author or admin)
+ * Modify DAC permissions (author/admin only)
  */
 router.put('/:id/permissions', auth, async (req, res) => {
   try {
@@ -215,21 +158,22 @@ router.put('/:id/permissions', auth, async (req, res) => {
     if (!paper) return res.status(404).json({ message: 'Paper not found' });
 
     const isOwner = paper.authorId.equals(req.user._id);
-    if (!isOwner && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
-      return res
-        .status(403)
-        .json({ message: 'Only owner or admin can modify DAC permissions' });
+    if (!isOwner && !['admin', 'superadmin'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Only author or admin can modify DAC permissions' });
     }
 
     const { grant = [], revoke = [] } = req.body;
     paper.dacPermissions = paper.dacPermissions || [];
+
+    // Grant access
     grant.forEach((g) => {
-      if (!paper.dacPermissions.find((id) => String(id) === String(g)))
+      if (!paper.dacPermissions.find((id) => String(id) === String(g))) {
         paper.dacPermissions.push(g);
+      }
     });
-    paper.dacPermissions = paper.dacPermissions.filter(
-      (id) => !revoke.includes(String(id))
-    );
+
+    // Revoke access
+    paper.dacPermissions = paper.dacPermissions.filter((id) => !revoke.includes(String(id)));
 
     await paper.save();
 
@@ -240,7 +184,42 @@ router.put('/:id/permissions', auth, async (req, res) => {
       rawData: { paperId: paper._id, grant, revoke },
     });
 
-    res.json({ message: 'Permissions updated' });
+    res.json({ message: 'Permissions updated', dacPermissions: paper.dacPermissions });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * Update paper status (editor/admin/superadmin only)
+ */
+router.put('/:id/status', auth, async (req, res) => {
+  try {
+    const paper = await Paper.findById(req.params.id);
+    if (!paper) return res.status(404).json({ message: 'Paper not found' });
+
+    if (!['editor', 'admin', 'superadmin'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Not authorized to update status' });
+    }
+
+    const { status } = req.body;
+    const allowedStatuses = ['submitted', 'under_review', 'accepted', 'rejected'];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: 'Invalid status value' });
+    }
+
+    paper.status = status;
+    await paper.save();
+
+    await createLog({
+      userId: req.user._id,
+      action: 'UPDATE_PAPER_STATUS',
+      ip: req.ip,
+      rawData: { paperId: paper._id, newStatus: status },
+    });
+
+    res.json({ message: 'Paper status updated', paper });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -252,11 +231,10 @@ router.delete('/:id', auth, async (req, res) => {
   try {
     const paper = await Paper.findById(req.params.id);
     if (!paper) return res.status(404).json({ message: 'Paper not found' });
-    
+
     if (!paper.authorId.equals(req.user._id))
       return res.status(403).json({ message: 'Only author can delete' });
 
-    // Delete file
     if (fs.existsSync(paper.filePath)) fs.unlinkSync(paper.filePath);
 
     await paper.deleteOne();
@@ -274,6 +252,5 @@ router.delete('/:id', auth, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-
 
 module.exports = router;

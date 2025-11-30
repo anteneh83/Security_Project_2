@@ -49,7 +49,6 @@ export default function EditorDashboard() {
   // --- Change request states ---
   const [newRole, setNewRole] = useState("");
   const [reason, setReason] = useState("");
-  const [roleRequests, setRoleRequests] = useState<RoleRequest[]>([]);
 
   const headers = auth.getAuthHeaders().headers;
   const api = axios.create({ baseURL: "http://localhost:4000/api", headers });
@@ -152,26 +151,16 @@ export default function EditorDashboard() {
       toast.success("Role change request submitted");
       setNewRole("");
       setReason("");
-      fetchRoleRequests();
     } catch (err: any) {
       toast.error(err?.response?.data?.message || "Failed to submit request");
     }
   };
 
-  const fetchRoleRequests = async () => {
-    try {
-      const res = await api.get("/admin/roles/requests");
-      setRoleRequests(res.data.requests || []);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message || "Failed to fetch role requests");
-    }
-  };
-
+  
   useEffect(() => {
     setLoading(true);
     fetchUsers();
     fetchPapers();
-    fetchRoleRequests();
     setLoading(false);
   }, []);
 
@@ -182,7 +171,7 @@ export default function EditorDashboard() {
       <Toaster position="top-right" />
        <div className="flex justify-between items-center">
       <div>
-      <h1 className="text-3xl font-bold">Editor Dashboard</h1>
+        <h1 className="text-3xl font-bold">Editor Dashboard</h1>
         <p className="text-gray-600">Submit new research papers and track review progress.</p>
       </div>
       <button
@@ -195,6 +184,38 @@ export default function EditorDashboard() {
         Logout
       </button>
     </div>
+
+       {/* --- Change Request Section --- */}
+      <section className="bg-white p-4 rounded shadow space-y-4 mt-6">
+        <h2 className="text-xl font-semibold">Role Change Requests</h2>
+        <div className="flex flex-col space-y-2">
+          <select
+            className="border p-2 rounded"
+            value={newRole}
+            onChange={(e) => setNewRole(e.target.value)}
+          >
+            <option value="">Select Role</option>
+            <option value="author">Author</option>
+            <option value="reviewer">Reviewer</option>
+            <option value="editor">Editor</option>
+            <option value="hr">HR</option>
+            <option value="admin">Admin</option>
+          </select>
+          <input
+            type="text"
+            placeholder="Reason for role change"
+            className="border p-2 rounded"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+          <button
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+            onClick={submitRoleRequest}
+          >
+            Submit Request
+          </button>
+        </div>
+      </section>
 
       {/* --- Papers Section --- */}
       <section className="bg-white p-4 rounded shadow space-y-4">
@@ -322,56 +343,7 @@ export default function EditorDashboard() {
         )}
       </section>
 
-      {/* --- Change Request Section --- */}
-      <section className="bg-white p-4 rounded shadow space-y-4 mt-6">
-        <h2 className="text-xl font-semibold">Role Change Requests</h2>
-        <div className="flex flex-col space-y-2">
-          <select
-            className="border p-2 rounded"
-            value={newRole}
-            onChange={(e) => setNewRole(e.target.value)}
-          >
-            <option value="">Select Role</option>
-            <option value="author">Author</option>
-            <option value="reviewer">Reviewer</option>
-            <option value="editor">Editor</option>
-            <option value="hr">HR</option>
-            <option value="admin">Admin</option>
-          </select>
-          <input
-            type="text"
-            placeholder="Reason for role change"
-            className="border p-2 rounded"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-          />
-          <button
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-            onClick={submitRoleRequest}
-          >
-            Submit Request
-          </button>
-        </div>
-
-        <div className="mt-4 space-y-2">
-          {roleRequests.length === 0 ? (
-            <p>No role change requests.</p>
-          ) : (
-            roleRequests.map((req) => (
-              <div key={req._id} className="border p-2 rounded">
-                <p>
-                  Requested Role: <span className="font-semibold">{req.requestedRole}</span>
-                </p>
-                <p>Reason: {req.reason}</p>
-                <p>Status: <span className="font-semibold">{req.status}</span></p>
-                <p className="text-sm text-gray-500">
-                  {new Date(req.timestamp).toLocaleString()}
-                </p>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
+     
     </div>
   );
 }

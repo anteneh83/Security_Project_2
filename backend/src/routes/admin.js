@@ -41,6 +41,20 @@ router.post('/roles/request', auth, async (req, res) => {
 });
 
 /**
+ * Get all authors (any authenticated user)
+ * GET /api/admin/users/authors
+ */
+router.get('/users/authors', auth, async (req, res) => {
+  try {
+    const authors = await User.find({ role: 'author' }).select('name email role department');
+    res.json({ authors });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
  * Get all pending role requests (admin/superadmin only)
  * GET /api/admin/roles/requests
  */
@@ -116,10 +130,10 @@ router.post('/roles/requests/:id/reject', auth, requireRole(['admin','superadmin
 });
 
 /**
- * Get all users (admin/superadmin only)
+ * Get all users (admin/superadmin/editor only)
  * GET /api/admin/users
  */
-router.get('/users', auth, requireRole(['admin','superadmin']), async (req, res) => {
+router.get('/users', auth, requireRole(['admin','superadmin', 'editor']), async (req, res) => {
   try {
     const users = await User.find().select('name email role department');
     res.json({ users });
@@ -162,7 +176,7 @@ router.put('/users/:id/role', auth, requireRole(['admin','superadmin']), async (
 // Assign a reviewer to a paper
 // PUT /api/admin/papers/:paperId/assign-reviewer
 // body: { reviewerId }
-router.put('/papers/:paperId/assign-reviewer', auth, requireRole(['admin','superadmin']), async (req, res) => {
+router.put('/papers/:paperId/assign-reviewer', auth, requireRole(['admin','superadmin', 'editor']), async (req, res) => {
   try {
     const { paperId } = req.params;
     const { reviewerId } = req.body;

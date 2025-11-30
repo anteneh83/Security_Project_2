@@ -1,9 +1,10 @@
-"use client";
+'use client';
 
 import { useState, useEffect } from "react";
 import axios from "axios";
 import useAuth from "@/hooks/useAuth";
 import { toast, Toaster } from "react-hot-toast";
+import { useRef } from "react";
 
 interface Paper {
   _id: string;
@@ -13,6 +14,8 @@ interface Paper {
   department: string;
   filePath: string;
   fileName: string;
+  status: string;
+  createdAt: string;
 }
 
 interface Review {
@@ -29,6 +32,7 @@ type ReviewState = {
 export default function AuthorDashboard() {
   const auth = useAuth();
   const [papers, setPapers] = useState<Paper[]>([]);
+  const [filteredPapers, setFilteredPapers] = useState<Paper[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [abstract, setAbstract] = useState("");
@@ -39,13 +43,82 @@ export default function AuthorDashboard() {
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [activePaperId, setActivePaperId] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ReviewState>({});
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [sharePaperId, setSharePaperId] = useState<string | null>(null);
+  const [coAuthors, setCoAuthors] = useState<string[]>([]); // list of user IDs/emails to share with
+  const [allAuthors, setAllAuthors] = useState<{_id:string, name:string, email:string}[]>([]); // to select from
+  const coAuthorsRef = useRef<HTMLInputElement>(null);
 
   const api = axios.create({
     baseURL: "http://localhost:4000/api",
     headers: auth.getAuthHeaders().headers,
   });
 
-  // Fetch papers
+  // ------------------ Helper functions ------------------
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case "submitted":
+        return "Draft";
+      case "under_review":
+        return "Submitted";
+      case "accepted":
+        return "Final Approved";
+      case "rejected":
+        return "Rejected";
+      default:
+        return status;
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "submitted":
+        return "text-gray-600";
+      case "under_review":
+        return "text-yellow-600";
+      case "accepted":
+        return "text-green-600";
+      case "rejected":
+        return "text-red-600";
+      default:
+        return "text-gray-500";
+    }
+  };
+
+      const fetchAuthors = async () => {
+      try {
+        const res = await api.get("/admin/users/authors"); // new endpoint
+        setAllAuthors(res.data.authors);
+      } catch (err: any) {
+        toast.error(err?.response?.data?.message || "Failed to fetch authors");
+      }
+    };
+
+
+  const openShareModal = (paperId: string) => {
+  setSharePaperId(paperId);
+  setShowShareModal(true);
+  fetchAuthors();
+};
+
+  // ------------------ Submit Share DAC Permissions ------------------
+  const sharePaper = async () => {
+    if (!sharePaperId) return toast.error("Paper ID missing");
+
+    try {
+      await api.put(`/papers/${sharePaperId}/permissions`, {
+        grant: coAuthors,
+      });
+      toast.success("Paper shared successfully!");
+      setCoAuthors([]);
+      setShowShareModal(false);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || "Failed to share paper");
+    }
+  };
+
+  // ------------------ Fetch papers ------------------
   const fetchPapers = async () => {
     try {
       const res = await api.get("/papers/");
@@ -70,7 +143,16 @@ export default function AuthorDashboard() {
     fetchPapers();
   }, []);
 
-  // Submit or update paper
+  // ------------------ Filter papers ------------------
+  useEffect(() => {
+    if (statusFilter === "all") {
+      setFilteredPapers(papers);
+    } else {
+      setFilteredPapers(papers.filter(p => getStatusLabel(p.status).toLowerCase() === statusFilter));
+    }
+  }, [statusFilter, papers]);
+
+  // ------------------ Submit / Update paper ------------------
   const submitPaper = async () => {
     if (!title || !abstract || !keywords || !department) {
       return toast.error("All fields except file are required.");
@@ -92,7 +174,6 @@ export default function AuthorDashboard() {
         updateData.append("keywords", keywords);
         updateData.append("department", department);
 
-        // Only include paper file if user selected a new one
         if (selectedFile) {
           updateData.append("paper", selectedFile);
         }
@@ -103,7 +184,6 @@ export default function AuthorDashboard() {
 
         toast.success("Paper updated successfully");
       } else {
-        // Submit new paper
         await api.post("/papers/", formData, {
           headers: { "Content-Type": "multipart/form-data" },
         });
@@ -124,7 +204,7 @@ export default function AuthorDashboard() {
     }
   };
 
-  // Delete paper
+  // ------------------ Delete paper ------------------
   const deletePaper = async (id: string) => {
     if (!id) return toast.error("Paper ID is missing");
     
@@ -138,7 +218,7 @@ export default function AuthorDashboard() {
     }
   };
 
-  // Download paper
+  // ------------------ Download paper ------------------
   const downloadPaper = async (id: string, filePath: string) => {
     if (!id) return toast.error("Paper ID is missing");
     const fileName = filePath.split("/").pop() || "paper.pdf";
@@ -156,42 +236,41 @@ export default function AuthorDashboard() {
     }
   };
 
-const fetchReviews = async (paperId: string) => {
-  if (!paperId) return;
+  // ------------------ Fetch reviews ------------------
+  const fetchReviews = async (paperId: string) => {
+    if (!paperId) return;
 
-  try {
-    const res = await api.get(`/reviews/paper/${paperId}`);
+    try {
+      const res = await api.get(`/reviews/paper/${paperId}`);
 
-    setReviews((prev) => ({
-      ...prev,
-      [paperId]: res.data.reviews ?? [],
-    }));
-  } catch (error: any) {
-    const status = error?.response?.status;
-    const message = error?.response?.data?.message;
+      setReviews((prev) => ({
+        ...prev,
+        [paperId]: res.data.reviews ?? [],
+      }));
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const message = error?.response?.data?.message;
 
-    let errorText = "Failed to fetch reviews.";
+      let errorText = "Failed to fetch reviews.";
 
-    if (status === 403) {
-      if (message?.toLowerCase().includes("clearance")) {
-        errorText = "Access denied: MAC policy restricts your clearance level.";
-      } else if (message?.toLowerCase().includes("department")) {
-        errorText = "Access denied: ABAC department rule prevents viewing this review.";
+      if (status === 403) {
+        if (message?.toLowerCase().includes("clearance")) {
+          errorText = "Access denied: MAC policy restricts your clearance level.";
+        } else if (message?.toLowerCase().includes("department")) {
+          errorText = "Access denied: ABAC department rule prevents viewing this review.";
+        }
+      } else if (status === 401) {
+        errorText = "Unauthorized: Please log in again.";
       }
-    } else if (status === 401) {
-      errorText = "Unauthorized: Please log in again.";
+
+      setReviews((prev) => ({
+        ...prev,
+        [paperId]: { error: errorText },
+      }));
     }
+  };
 
-    setReviews((prev) => ({
-      ...prev,
-      [paperId]: { error: errorText },
-    }));
-  }
-};
-
-
-
-  // Edit paper
+  // ------------------ Edit paper ------------------
   const editPaper = (paper: Paper) => {
     setEditingPaperId(paper._id);
     setTitle(paper.title);
@@ -205,22 +284,22 @@ const fetchReviews = async (paperId: string) => {
     <div className="p-8 space-y-6">
       <Toaster position="top-right" />
       <div className="flex justify-between items-center">
-      <div>
-        <h1 className="text-3xl font-bold">Author Dashboard</h1>
-        <p className="text-gray-600">Submit new research papers and track review progress.</p>
+        <div>
+          <h1 className="text-3xl font-bold">Author Dashboard</h1>
+          <p className="text-gray-600">Submit new research papers and track review progress.</p>
+        </div>
+        <button
+          onClick={() => {
+            auth.logout();
+            window.location.href = '/auth/login';
+          }}
+          className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+        >
+          Logout
+        </button>
       </div>
-      <button
-        onClick={() => {
-          auth.logout();
-          window.location.href = '/auth/login'; // redirect to login page after logout
-        }}
-        className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
-      >
-        Logout
-      </button>
-    </div>
-    
-      {/* Submit / Update */}
+
+      {/* ------------------ Submit / Update Paper ------------------ */}
       <section className="bg-white p-4 rounded shadow space-y-2">
         <h2 className="text-xl font-semibold">{editingPaperId ? "Edit Paper" : "Submit New Paper"}</h2>
         <input
@@ -265,14 +344,30 @@ const fetchReviews = async (paperId: string) => {
         </button>
       </section>
 
-      {/* Papers list */}
+      {/* ------------------ Status Filter ------------------ */}
+      <section className="bg-white p-4 rounded shadow space-y-2">
+        <h2 className="text-xl font-semibold">Filter Papers by Status</h2>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="border p-2 rounded w-full max-w-xs"
+        >
+          <option value="all">All</option>
+          <option value="draft">Draft</option>
+          <option value="submitted">Submitted</option>
+          <option value="final approved">Final Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+      </section>
+
+      {/* ------------------ Papers List ------------------ */}
       <section className="bg-white p-4 rounded shadow space-y-2">
         <h2 className="text-xl font-semibold">Papers</h2>
-        {papers.length === 0 ? (
+        {filteredPapers.length === 0 ? (
           <p>No papers submitted yet.</p>
         ) : (
           <div className="space-y-2">
-            {papers.map((p) => (
+            {filteredPapers.map((p) => (
               <div
                 key={p._id}
                 className="border p-2 rounded flex flex-col md:flex-row md:items-center md:justify-between space-y-2 md:space-y-0"
@@ -282,6 +377,9 @@ const fetchReviews = async (paperId: string) => {
                   <p className="text-gray-600">{p.abstract}</p>
                   <p className="text-sm text-gray-500">Keywords: {p.keywords}</p>
                   <p className="text-sm text-gray-500">Department: {p.department}</p>
+                  <p className={`text-sm font-medium ${getStatusColor(p.status)}`}>
+                    Status: {getStatusLabel(p.status)}
+                  </p>
                 </div>
                 <div className="flex space-x-2">
                   <button
@@ -312,17 +410,76 @@ const fetchReviews = async (paperId: string) => {
                   >
                     View Reviews
                   </button>
+                  <button
+                    onClick={() => openShareModal(p._id)}
+                    className="bg-purple-600 text-white px-2 py-1 rounded hover:bg-purple-700"
+                  >
+                    Share
+                  </button>
 
                 </div>
-
-                
               </div>
             ))}
           </div>
         )}
       </section>
 
-      {/* Review Modal */}
+       {showShareModal && sharePaperId && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded shadow-lg w-full max-w-md relative">
+
+              {/* Close Button */}
+              <button
+                className="absolute top-2 right-2 text-gray-600 hover:text-black"
+                onClick={() => {
+                  setShowShareModal(false);
+                  setSharePaperId(null);
+                  setCoAuthors([]);
+                }}
+              >
+                ✖
+              </button>
+
+              <h2 className="text-xl font-semibold mb-4">Share Paper with Co-Authors</h2>
+
+              <div className="space-y-2">
+                <p className="text-gray-600 text-sm">Select authors to share this paper with:</p>
+                <div className="space-y-1 max-h-60 overflow-y-auto border p-2 rounded">
+                  {allAuthors.map((author) => (
+                    <label key={author._id} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        value={author._id}
+                        checked={coAuthors.includes(author._id)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (e.target.checked) {
+                            setCoAuthors((prev) => [...prev, val]);
+                          } else {
+                            setCoAuthors((prev) => prev.filter((id) => id !== val));
+                          }
+                        }}
+                        className="w-4 h-4"
+                      />
+                      <span>{author.name} ({author.email})</span>
+                    </label>
+                  ))}
+                </div>
+
+                <button
+                  onClick={sharePaper}
+                  className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 mt-3"
+                >
+                  Share Paper
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+
+      {/* ------------------ Review Modal ------------------ */}
       {showReviewModal && activePaperId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded shadow-lg w-full max-w-md relative">
@@ -340,25 +497,24 @@ const fetchReviews = async (paperId: string) => {
 
             <h2 className="text-xl font-semibold mb-4">Reviews</h2>
 
-            {/* Review Content */}
-              {!reviews[activePaperId] ? (
-                <p className="text-gray-600 text-sm">Loading...</p>
-                ) : "error" in (reviews[activePaperId] as any) ? (
-                  <p className="text-red-600 font-medium">
-                    {(reviews[activePaperId] as any).error}
-                  </p>
-                ) : (reviews[activePaperId] as Review[]).length === 0 ? (
-                  <p className="text-gray-600">No reviews yet for this paper.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {(reviews[activePaperId] as Review[]).map((rev) => (
-                      <div key={rev._id} className="border p-2 rounded">
-                        <p><strong>Score:</strong> {rev.score}</p>
-                        <p><strong>Comment:</strong> {rev.comment}</p>
-                      </div>
-                    ))}
+            {!reviews[activePaperId] ? (
+              <p className="text-gray-600 text-sm">Loading...</p>
+            ) : "error" in (reviews[activePaperId] as any) ? (
+              <p className="text-red-600 font-medium">
+                {(reviews[activePaperId] as any).error}
+              </p>
+            ) : (reviews[activePaperId] as Review[]).length === 0 ? (
+              <p className="text-gray-600">No reviews yet for this paper.</p>
+            ) : (
+              <div className="space-y-3">
+                {(reviews[activePaperId] as Review[]).map((rev) => (
+                  <div key={rev._id} className="border p-2 rounded">
+                    <p><strong>Score:</strong> {rev.score}</p>
+                    <p><strong>Comment:</strong> {rev.comment}</p>
                   </div>
-                )}
+                ))}
+              </div>
+            )}
 
           </div>
         </div>
